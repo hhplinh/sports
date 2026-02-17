@@ -301,6 +301,7 @@ def run_team_classification(source_image_folder_path: str, device: str) -> Itera
             continue
         result = player_detection_model(frame, imgsz=1280, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(result)
+        logging.error(f"[TeamClassification] {image_path}: {len(detections.xyxy)} detections found.")
         crops += get_crops(frame, detections[detections.class_id == PLAYER_CLASS_ID])
 
     team_classifier = TeamClassifier(device=device)
@@ -352,7 +353,9 @@ def run_radar(source_image_folder_path: str, device: str) -> Iterator[np.ndarray
         if frame is None:
             continue
         result = player_detection_model(frame, imgsz=1280, verbose=False)[0]
+        logging.error(f"[Radar] {image_path}: Raw model result: {result}")
         detections = sv.Detections.from_ultralytics(result)
+        logging.error(f"[Radar] {image_path}: {len(detections.xyxy)} detections found.")
         crops += get_crops(frame, detections[detections.class_id == PLAYER_CLASS_ID])
 
     team_classifier = TeamClassifier(device=device)
@@ -370,15 +373,22 @@ def run_radar(source_image_folder_path: str, device: str) -> Iterator[np.ndarray
         detections = sv.Detections.from_ultralytics(result)
         detections = tracker.update_with_detections(detections)
 
+        # Log detected class IDs
+        if hasattr(detections, 'class_id'):
+            logging.error(f"[Radar] {image_path}: Detected class IDs: {detections.class_id}")
+        else:
+            logging.error(f"[Radar] {image_path}: No class_id attribute in detections.")
+
         players = detections[detections.class_id == PLAYER_CLASS_ID]
+        goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
+        referees = detections[detections.class_id == REFEREE_CLASS_ID]
+
+        logging.error(f"[Radar] {image_path}: Players={len(players.xyxy)}, Goalkeepers={len(goalkeepers.xyxy)}, Referees={len(referees.xyxy)}")
+
         crops = get_crops(frame, players)
         players_team_id = team_classifier.predict(crops)
-
-        goalkeepers = detections[detections.class_id == GOALKEEPER_CLASS_ID]
         goalkeepers_team_id = resolve_goalkeepers_team_id(
             players, players_team_id, goalkeepers)
-
-        referees = detections[detections.class_id == REFEREE_CLASS_ID]
 
         detections = sv.Detections.merge([players, goalkeepers, referees])
         color_lookup = np.array(
@@ -444,11 +454,20 @@ def main(source_image_folder_path: str, target_image_folder_path: str, device: s
     logging.error(f"Found {len(image_paths)} images to process.")
 
     for idx, (image_path, frame) in enumerate(zip(image_paths, images)):
+        img_check = cv2.imread(image_path)
+        if img_check is None:
+            logging.error(f"FAILED TO READ IMAGE: {image_path}")
+        else:
+            logging.error(f"Successfully read image: {image_path}")
         logging.error(f"Processing image {idx+1}/{len(image_paths)}: {image_path}")
         filename = os.path.basename(image_path)
         output_path = os.path.join(target_image_folder_path, filename)
         logging.error(f"Saving annotated image to: {output_path}")
-        cv2.imwrite(output_path, frame)
+        save_success = cv2.imwrite(output_path, frame)
+        if save_success:
+            logging.error(f"Image saved successfully: {output_path}")
+        else:
+            logging.error(f"FAILED TO SAVE IMAGE: {output_path}")
 
 
 if __name__ == '__main__':
@@ -466,4 +485,4 @@ if __name__ == '__main__':
     )
 
 
-# python3 examples/soccer/inference.py --source_image_folder_path input --target_image_folder_path output --device cuda --mode RADAR
+# python3 examples/soccer/inference.py --source_image_folder_path input --target_image_folder_path output --device cuda --mode PLAYER_DETECTION
